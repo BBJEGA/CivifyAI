@@ -1,0 +1,8 @@
+{
+  "name": "CivifyAI",
+  "description": "An AI-powered platform for governments and civic organizations to collect, analyze, and act on citizen reports globally.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ]
+}
