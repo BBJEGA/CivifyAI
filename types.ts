@@ -1,3 +1,4 @@
+
 export enum Urgency {
   Low = 'Low',
   Medium = 'Medium',
@@ -7,62 +8,67 @@ export enum Urgency {
 export type UserRole = 'citizen' | 'organization';
 
 export interface UserProfile {
-  id: string;
+  uid: string;
   name: string;
-  organizationName?: string; // New field for Org name
+  organizationName?: string;
   email: string;
   role: UserRole;
   location: {
-    country: string;
-    state: string; // Level 1 (City/State)
-    lga: string;   // Level 2 (Town/District)
+    state: string;
+    lga: string;
   };
 }
 
 export interface CivicReport {
   id: string;
-  userId: string; // To identify who created it
-  issue_type: string;
-  description: string;
-  original_text: string;
-  original_language: string;
-  location: string;
-  lga?: string; // Maps to Town / District / LGA (Level 2)
-  state?: string; // Maps to City / State / Region (Level 1)
-  country?: string; 
-  coordinates?: { lat: number; lng: number }; // For "Near Me" calculation
-  region: string; // General display region
-  urgency: Urgency;
-  predicted_escalation: Urgency;
-  
-  // Dual Actions
-  gov_action: string;      // Plan for the government
-  citizen_action: string;  // Advice for the individual
-  
+  userId: string;
+  user_description: string;
+  ai_metadata: {
+    category: string;
+    urgency: Urgency;
+    is_high_risk: boolean;
+    safety_advice?: string;
+    suggested_description: string;
+  };
+  original_input?: {
+    text?: string;
+    language?: string;
+    audio_transcription?: string;
+  };
+  location: {
+    address: string;
+    lga: string;
+    state: string;
+    coordinates: { lat: number; lng: number };
+  };
+  media_urls?: string[];
   timestamp: number;
   status: 'New' | 'In Progress' | 'Resolved';
+  upvotes: number;
   source_type: 'text' | 'voice' | 'image' | 'mixed';
-  upvotes: number; // For "I see this too" feature
-}
-
-export interface ReportStats {
-  total: number;
-  byCategory: { name: string; value: number }[];
-  highUrgencyCount: number;
-  byRegion: { name: string; value: number }[];
 }
 
 export interface AnalysisInput {
-  text: string;
+  text?: string;
   image?: File | null;
   audio?: Blob | null;
-  userLocation?: string; // Location provided by browser or user input
+  userLocation?: string;
   userCoordinates?: { lat: number; lng: number };
 }
 
-export interface AnalysisResult extends Partial<CivicReport> {
-  needs_clarification?: boolean;
-  missing_info_question?: string;
+export interface AIAnalysisResponse {
+  suggested_description: string;
+  suggested_category: string;
+  suggested_urgency: Urgency;
+  is_high_risk: boolean;
+  safety_advice?: string;
+  detected_language: string;
+  transcription?: string;
+  detected_location?: {
+    address?: string;
+    lga?: string;
+    state?: string;
+  };
 }
 
 export type ViewMode = 'submit' | 'nearby' | 'my-reports' | 'dashboard';

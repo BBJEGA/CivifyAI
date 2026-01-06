@@ -1,138 +1,86 @@
-import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { CivicReport, Urgency, AnalysisInput, AnalysisResult } from "../types";
+
+import { GoogleGenAI, Type } from "@google/genai";
+import { AIAnalysisResponse, Urgency, AnalysisInput } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const REPORT_SCHEMA: Schema = {
+// Fix: Removed 'Schema' from imports and relying on Type from @google/genai as per guidelines.
+const ANALYSIS_SCHEMA = {
   type: Type.OBJECT,
   properties: {
-    issue_type: { type: Type.STRING, description: "The category of the issue (e.g., Roads, Water, Safety)." },
-    description: { type: Type.STRING, description: "A concise summary of the issue in English." },
-    original_text: { type: Type.STRING, description: "The original text or transcription of the input." },
-    original_language: { type: Type.STRING, description: "The detected language of the original input." },
-    location: { type: Type.STRING, description: "The specific street, landmark, or address." },
-    lga: { type: Type.STRING, description: "The 2nd Administrative Level (Town, District, LGA, County, or Municipality)." },
-    state: { type: Type.STRING, description: "The 1st Administrative Level (State, Province, Region, or Major City)." },
-    country: { type: Type.STRING, description: "The Country." },
-    region: { type: Type.STRING, description: "A formatted string: 'Town, City, Country' (e.g., 'Jega, Kebbi, Nigeria')." },
-    urgency: { type: Type.STRING, enum: ["Low", "Medium", "High"] },
-    predicted_escalation: { type: Type.STRING, enum: ["Low", "Medium", "High"], description: "Risk of escalation if not addressed." },
-    
-    // Updated Fields for Dual Recommendations
-    gov_action: { type: Type.STRING, description: "A specific, authoritative operational plan for the government/organization to solve the issue (e.g., 'Dispatch maintenance crew to...')." },
-    citizen_action: { type: Type.STRING, description: "Personal safety advice for the citizen reporting the issue (e.g., 'Avoid the lane', 'Boil water before drinking', 'Stay clear of the area')." },
-    
-    needs_clarification: { type: Type.BOOLEAN, description: "Set to true if CRITICAL information (especially specific location) is missing." },
-    missing_info_question: { type: Type.STRING, description: "The question to ask the user to obtain the missing information (e.g., 'Please provide the location')." }
+    suggested_description: { type: Type.STRING, description: "A clean, concise English description of the reported issue." },
+    suggested_category: { type: Type.STRING, description: "Category: Roads, Power, Water, Waste, Security, Health." },
+    suggested_urgency: { type: Type.STRING, description: "Low, Medium, or High." },
+    is_high_risk: { type: Type.BOOLEAN, description: "True if there is immediate physical danger (fire, flood, live wires)." },
+    safety_advice: { type: Type.STRING, description: "Crucial safety steps for the citizen. Leave empty if is_high_risk is false." },
+    detected_language: { type: Type.STRING, description: "The language used in the voice or text input." },
+    transcription: { type: Type.STRING, description: "The literal transcription of any audio input." },
+    detected_location: {
+      type: Type.OBJECT,
+      properties: {
+        address: { type: Type.STRING },
+        lga: { type: Type.STRING, description: "Nigerian Local Government Area" },
+        state: { type: Type.STRING, description: "Nigerian State" }
+      }
+    }
   },
-  required: ["issue_type", "description", "original_text", "original_language", "urgency", "needs_clarification", "gov_action", "citizen_action"]
+  required: ["suggested_description", "suggested_category", "suggested_urgency", "is_high_risk", "detected_language"]
 };
 
-export const analyzeReport = async (inputs: AnalysisInput[]): Promise<AnalysisResult> => {
-  try {
-    const parts: any[] = [];
+export const analyzeCivicInput = async (input: AnalysisInput): Promise<AIAnalysisResponse> => {
+  const parts: any[] = [];
+  
+  let promptText = `
+    You are the CivicLink AI assistant for Nigeria. 
+    Analyze the citizen's report (text, image, or voice).
+    
+    GOAL: Assist the user in filling their report accurately.
+    
+    LOCALE: NIGERIA
+    Ensure all location mapping is within the 36 Nigerian States and their respective LGAs.
+    
+    SAFETY LOGIC:
+    Only provide 'safety_advice' if 'is_high_risk' is true. 
+    High risk = Active fire, major flooding, collapsed building, live electricity wires, or violent crime.
+    If it is a pothole, dirty street, or broken pipe, set is_high_risk to false and safety_advice to empty.
+    
+    TRANSLATION:
+    If input is in Pidgin, Hausa, Igbo, or Yoruba, translate the 'suggested_description' to professional English.
+  `;
 
-    let promptText = `
-      You are CivifyAI, an intelligent government aide.
-      Analyze the citizen report.
-      
-      CRITICAL TASK: GLOBAL LOCATION MAPPING
-      You must identify the hierarchy of the location using standard administrative divisions:
-      
-      1. **Country**: The nation.
-      2. **State/Province (Level 1)**: The primary subdivision (e.g., State in Nigeria/USA, Region in Morocco/France).
-      3. **Town/District (Level 2)**: The secondary subdivision (e.g., LGA in Nigeria, City/Town in others).
-      4. **Specific Location**: The street or landmark.
+  if (input.text) promptText += `\nUser Text: "${input.text}"`;
+  if (input.userLocation) promptText += `\nDetected Context: "${input.userLocation}"`;
+  
+  parts.push({ text: promptText });
 
-      Examples:
-      - Input: "No light in Jega, Kebbi" -> Country: Nigeria, State: Kebbi, LGA: Jega.
-      - Input: "Pothole in Rabat Agdal" -> Country: Morocco, State: Rabat-Salé-Kénitra, LGA: Rabat.
-      - Input: "Trash in Manhattan, NY" -> Country: USA, State: New York, LGA: Manhattan.
-      
-      General Tasks:
-      1. Transcribe audio if present.
-      2. Detect language and translate description to English.
-      3. Classify issue.
-      4. Assess urgency.
-      5. **Generate Two Actions:**
-         - **Government Action:** What should the authorities DO? (e.g., Fix it, Dispatch Police).
-         - **Citizen Action:** What should the user do to stay safe? (e.g., Drive carefully, Boil water).
-      
-      If location is missing, set 'needs_clarification' to true.
-    `;
-
-    // Process all inputs in order to build context
-    for (let i = 0; i < inputs.length; i++) {
-      const input = inputs[i];
-      const role = i === 0 ? "Initial Report" : "User Follow-up";
-      
-      promptText += `\n\n--- ${role} ---`;
-      
-      if (input.userLocation) {
-        promptText += `\nSystem Detected Location Context: "${input.userLocation}"`;
-      }
-      
-      if (input.text) {
-        promptText += `\nUser Text: "${input.text}"`;
-      }
-      
-      parts.push({ text: promptText });
-      promptText = ""; 
-
-      // Add Image
-      if (input.image) {
-        const base64Image = await fileToBase64(input.image);
-        parts.push({
-          inlineData: {
-            mimeType: input.image.type,
-            data: base64Image
-          }
-        });
-      }
-
-      // Add Audio
-      if (input.audio) {
-        const base64Audio = await blobToBase64(input.audio);
-        parts.push({
-          inlineData: {
-            mimeType: "audio/mp3",
-            data: base64Audio
-          }
-        });
-      }
-    }
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: { parts },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: REPORT_SCHEMA,
-        systemInstruction: "You are CivifyAI. Precise mapping of global administrative hierarchies is your highest priority. Provide distinct safety advice for citizens and operational plans for governments."
-      }
-    });
-
-    if (!response.text) {
-      throw new Error("No response from AI");
-    }
-
-    const json = JSON.parse(response.text);
-    return json as AnalysisResult;
-
-  } catch (error) {
-    console.error("Error analyzing report:", error);
-    throw error;
+  if (input.image) {
+    const data = await fileToBase64(input.image);
+    parts.push({ inlineData: { mimeType: input.image.type, data } });
   }
+
+  if (input.audio) {
+    const data = await blobToBase64(input.audio);
+    parts.push({ inlineData: { mimeType: "audio/mp3", data } });
+  }
+
+  // Fix: Use gemini-3-flash-preview as recommended for basic tasks and better capabilities
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: { parts },
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: ANALYSIS_SCHEMA,
+    }
+  });
+
+  // Fix: Directly accessing .text property as it is a property, not a method.
+  return JSON.parse(response.text || '{}') as AIAnalysisResponse;
 };
 
 const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const base64 = result.split(',')[1];
-      resolve(base64);
-    };
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
@@ -141,11 +89,7 @@ const fileToBase64 = (file: File): Promise<string> => {
 const blobToBase64 = (blob: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const base64 = result.split(',')[1];
-      resolve(base64);
-    };
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });

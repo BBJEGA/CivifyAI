@@ -1,299 +1,193 @@
+
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Image as ImageIcon, MapPin, Send, Loader2, StopCircle, X, MessageCircleQuestion } from 'lucide-react';
-import { AnalysisInput } from '../types';
+import { Mic, Image as ImageIcon, MapPin, Send, Loader2, StopCircle, X, ShieldAlert, CheckCircle, Edit3 } from 'lucide-react';
+import { AnalysisInput, AIAnalysisResponse, Urgency } from '../types';
+import { analyzeCivicInput } from '../services/geminiService';
 
 interface ReportFormProps {
-  onSubmit: (input: AnalysisInput) => Promise<void>;
-  isProcessing: boolean;
-  clarificationQuestion?: string | null;
-  onCancelClarification?: () => void;
+  onSubmit: (finalData: { description: string; analysis: AIAnalysisResponse; location: any }) => Promise<void>;
+  isSubmitting: boolean;
 }
 
-const ReportForm: React.FC<ReportFormProps> = ({ 
-  onSubmit, 
-  isProcessing, 
-  clarificationQuestion,
-  onCancelClarification 
-}) => {
+const ReportForm: React.FC<ReportFormProps> = ({ onSubmit, isSubmitting }) => {
   const [text, setText] = useState('');
   const [image, setImage] = useState<File | null>(null);
-  const [location, setLocation] = useState('');
-  const [isRecording, setIsRecording] = useState(false);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
-  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [isRecording, setIsRecording] = useState(false);
+  const [location, setLocation] = useState({ address: '', lga: '', state: '', lat: 0, lng: 0 });
+  
+  // AI Assistive States
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [aiSuggestion, setAiSuggestion] = useState<AIAnalysisResponse | null>(null);
+  const [editedDescription, setEditedDescription] = useState('');
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-detect location on mount if not in clarification mode
   useEffect(() => {
-    if ("geolocation" in navigator && !clarificationQuestion) {
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const { latitude, longitude } = position.coords;
-          setLocation(`${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
-        },
-        (error) => {
-          console.warn("Location access denied or unavailable", error);
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+          const data = await res.json();
+          setLocation({
+            address: data.display_name,
+            lga: data.address.town || data.address.suburb || data.address.county || '',
+            state: data.address.state || '',
+            lat: latitude,
+            lng: longitude
+          });
+        } catch (e) {
+          console.warn("Reverse geocoding failed");
+          setLocation(prev => ({ ...prev, lat: latitude, lng: longitude }));
         }
-      );
+      });
     }
-  }, [clarificationQuestion]);
+  }, []);
+
+  const handleInitialProcess = async () => {
+    if (!text && !image && !audioBlob) return;
+    setIsAnalyzing(true);
+    try {
+      const result = await analyzeCivicInput({ text, image, audio: audioBlob, userLocation: location.address });
+      setAiSuggestion(result);
+      setEditedDescription(result.suggested_description);
+    } catch (e) {
+      alert("AI analysis failed. Please type your report manually.");
+      setEditedDescription(text);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
   const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        setAudioBlob(blob);
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-      
-      // Timer
-      let seconds = 0;
-      setRecordingDuration(0);
-      timerRef.current = window.setInterval(() => {
-        seconds++;
-        setRecordingDuration(seconds);
-      }, 1000);
-
-    } catch (err) {
-      console.error("Error accessing microphone:", err);
-      alert("Microphone access is required for voice reports.");
-    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const recorder = new MediaRecorder(stream);
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = e => chunks.push(e.data);
+    recorder.onstop = () => setAudioBlob(new Blob(chunks, { type: 'audio/mp3' }));
+    recorder.start();
+    mediaRecorderRef.current = recorder;
+    setIsRecording(true);
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    }
+    mediaRecorderRef.current?.stop();
+    setIsRecording(false);
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setImage(e.target.files[0]);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!text && !image && !audioBlob) {
-      alert("Please provide input (Text, Image, or Voice).");
-      return;
-    }
-    
-    await onSubmit({
-      text,
-      image,
-      audio: audioBlob,
-      userLocation: location
-    });
-
-    // Reset form after successful submission
+  const resetForm = () => {
     setText('');
     setImage(null);
     setAudioBlob(null);
-    setRecordingDuration(0);
-  };
-
-  const formatDuration = (sec: number) => {
-    const m = Math.floor(sec / 60);
-    const s = sec % 60;
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
+    setAiSuggestion(null);
+    setEditedDescription('');
   };
 
   return (
-    <div className={`bg-white rounded-xl shadow-md border overflow-hidden transition-colors ${clarificationQuestion ? 'border-amber-200' : 'border-slate-200'}`}>
-      
-      {/* Header */}
-      <div className={`p-6 border-b ${clarificationQuestion ? 'bg-amber-50 border-amber-100' : 'bg-slate-50 border-slate-100'}`}>
-        <h2 className={`text-lg font-semibold ${clarificationQuestion ? 'text-amber-800' : 'text-slate-800'}`}>
-          {clarificationQuestion ? 'More Information Needed' : 'Submit a New Report'}
-        </h2>
-        <p className={`${clarificationQuestion ? 'text-amber-700' : 'text-slate-500'} text-sm mt-1`}>
-          {clarificationQuestion || "Describe the issue, upload a photo, or record a voice message. CivifyAI will analyze it instantly."}
-        </p>
+    <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden">
+      <div className="p-8 bg-slate-900 text-white">
+        <h2 className="text-2xl font-black">Submit a Report</h2>
+        <p className="text-slate-400 text-sm">Citizen-led reporting for a better Nigeria.</p>
       </div>
 
-      {/* Clarification Alert Body */}
-      {clarificationQuestion && (
-        <div className="bg-amber-50 px-6 pb-2">
-           <div className="flex items-start space-x-3 text-sm text-amber-800 bg-white/50 p-3 rounded-lg border border-amber-200">
-              <MessageCircleQuestion className="w-5 h-5 shrink-0" />
-              <span className="font-medium">{clarificationQuestion}</span>
-           </div>
-        </div>
-      )}
-      
-      <form onSubmit={handleSubmit} className="p-6 space-y-6">
-        {/* Text Input */}
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-2">
-            {clarificationQuestion ? "Your Reply" : "Description"}
-          </label>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={clarificationQuestion ? "Type your answer here..." : "Describe the issue... (e.g., 'Large pothole on 5th Avenue')"}
-            className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all resize-none h-32"
-          />
-        </div>
-
-        {/* Media Inputs Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          
-          {/* Audio Recorder */}
-          <div className={`border rounded-lg p-4 flex flex-col items-center justify-center transition-colors ${isRecording ? 'border-red-400 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
-            <div className="mb-2 text-sm font-medium text-slate-600">
-              {isRecording ? `Recording... ${formatDuration(recordingDuration)}` : audioBlob ? "Audio Recorded" : "Voice Report"}
+      <div className="p-8 space-y-6">
+        {!aiSuggestion ? (
+          <>
+            <div className="space-y-4">
+              <label className="block text-sm font-bold text-slate-700 uppercase tracking-wider">Describe the issue</label>
+              <textarea
+                value={text}
+                onChange={e => setText(e.target.value)}
+                placeholder="What is happening? (e.g. Broken pipe in Ikeja, flood on 3rd Mainland bridge)"
+                className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-blue-100 outline-none transition-all h-32 text-slate-800"
+              />
             </div>
-            
-            {!isRecording && !audioBlob && (
+
+            <div className="grid grid-cols-2 gap-4">
               <button
                 type="button"
-                onClick={startRecording}
-                className="p-4 bg-white rounded-full shadow-sm border border-slate-200 hover:bg-slate-100 transition-colors"
+                onClick={isRecording ? stopRecording : startRecording}
+                className={`flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-2xl transition-all ${isRecording ? 'bg-red-50 border-red-300 text-red-600 animate-pulse' : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-blue-400 hover:bg-blue-50'}`}
               >
-                <Mic className="w-6 h-6 text-slate-600" />
+                {isRecording ? <StopCircle className="w-8 h-8 mb-2" /> : <Mic className="w-8 h-8 mb-2" />}
+                <span className="text-xs font-bold uppercase">{isRecording ? "Stop Recording" : audioBlob ? "Voice Recorded" : "Voice Message"}</span>
               </button>
-            )}
 
-            {isRecording && (
-              <button
-                type="button"
-                onClick={stopRecording}
-                className="p-4 bg-red-500 rounded-full shadow-lg hover:bg-red-600 transition-colors animate-pulse"
-              >
-                <StopCircle className="w-6 h-6 text-white" />
-              </button>
-            )}
-
-            {audioBlob && !isRecording && (
-              <div className="flex items-center space-x-3">
-                <audio src={URL.createObjectURL(audioBlob)} controls className="h-8 w-32" />
-                <button 
-                  type="button" 
-                  onClick={() => { setAudioBlob(null); setRecordingDuration(0); }}
-                  className="p-1 hover:bg-slate-200 rounded-full"
-                >
-                  <X className="w-4 h-4 text-slate-500" />
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Image Upload */}
-          <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 flex flex-col items-center justify-center relative">
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              ref={fileInputRef}
-              onChange={handleImageUpload}
-            />
-            
-            {image ? (
-              <div className="relative w-full h-32 rounded-lg overflow-hidden group">
-                <img 
-                  src={URL.createObjectURL(image)} 
-                  alt="Preview" 
-                  className="w-full h-full object-cover"
-                />
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setImage(null);
-                    if (fileInputRef.current) fileInputRef.current.value = '';
-                  }}
-                  className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white p-1 rounded-full transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="flex flex-col items-center space-y-2 w-full h-full justify-center py-4"
+                className={`flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-2xl transition-all ${image ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-blue-400 hover:bg-blue-50'}`}
               >
-                <div className="p-3 bg-white rounded-full shadow-sm border border-slate-200">
-                  <ImageIcon className="w-6 h-6 text-slate-400" />
-                </div>
-                <span className="text-sm font-medium text-slate-600">Upload Photo</span>
+                <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={e => setImage(e.target.files?.[0] || null)} />
+                <ImageIcon className="w-8 h-8 mb-2" />
+                <span className="text-xs font-bold uppercase">{image ? "Image Selected" : "Attach Photo"}</span>
               </button>
+            </div>
+
+            <button
+              onClick={handleInitialProcess}
+              disabled={isAnalyzing || (!text && !image && !audioBlob)}
+              className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-lg flex items-center justify-center space-x-3 shadow-xl shadow-blue-600/20 hover:bg-blue-700 disabled:bg-slate-300"
+            >
+              {isAnalyzing ? <Loader2 className="w-6 h-6 animate-spin" /> : <Send className="w-6 h-6" />}
+              <span>{isAnalyzing ? "Analyzing..." : "Review Report"}</span>
+            </button>
+          </>
+        ) : (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
+            <div className="p-6 bg-blue-50 border border-blue-100 rounded-3xl relative">
+              <button onClick={() => setAiSuggestion(null)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X className="w-4 h-4"/></button>
+              <div className="flex items-center space-x-2 text-blue-700 mb-3">
+                <CheckCircle className="w-5 h-5" />
+                <span className="text-xs font-black uppercase tracking-widest">AI Assisted Report</span>
+              </div>
+              <textarea
+                value={editedDescription}
+                onChange={e => setEditedDescription(e.target.value)}
+                className="w-full bg-white p-4 rounded-xl border border-blue-200 text-slate-800 font-medium focus:ring-2 focus:ring-blue-500 outline-none h-24"
+              />
+              <p className="text-[10px] text-blue-500 mt-2 italic font-medium">* You can edit the AI-suggested description above.</p>
+            </div>
+
+            {aiSuggestion.is_high_risk && aiSuggestion.safety_advice && (
+              <div className="flex items-start p-4 bg-red-50 border border-red-100 rounded-2xl">
+                <ShieldAlert className="w-5 h-5 text-red-600 mr-3 shrink-0" />
+                <div>
+                  <span className="text-xs font-black text-red-700 uppercase tracking-wider block mb-1">Critical Safety Advice</span>
+                  <p className="text-sm text-slate-800 font-bold leading-snug">{aiSuggestion.safety_advice}</p>
+                </div>
+              </div>
             )}
+
+            <div className="flex items-center space-x-3 p-4 bg-slate-50 border border-slate-200 rounded-2xl">
+              <MapPin className="w-5 h-5 text-slate-400 shrink-0" />
+              <div className="flex-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Location Details</span>
+                <span className="text-sm font-bold text-slate-800">{location.address || "Detecting..."}</span>
+              </div>
+            </div>
+
+            <div className="flex space-x-4">
+              <button
+                onClick={resetForm}
+                className="flex-1 py-4 text-slate-600 bg-slate-100 rounded-2xl font-bold"
+              >
+                Discard
+              </button>
+              <button
+                onClick={() => onSubmit({ description: editedDescription, analysis: aiSuggestion, location })}
+                disabled={isSubmitting}
+                className="flex-[2] py-4 bg-blue-900 text-white rounded-2xl font-black flex items-center justify-center space-x-2 shadow-xl shadow-blue-900/20"
+              >
+                {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                <span>Final Submit</span>
+              </button>
+            </div>
           </div>
-        </div>
-
-        {/* Location Input - Hide if asking for location as it is redundant to the clarification question, but keep it available just in case user wants to type it there. Actually, let's keep it but maybe highlight it? */}
-        <div className="relative">
-          <MapPin className="absolute left-3 top-3 w-5 h-5 text-slate-400" />
-          <input
-            type="text"
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-            placeholder="Location (e.g., 123 Main St, Springfield)"
-            className={`w-full pl-10 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none ${clarificationQuestion && !location ? 'border-amber-300 ring-1 ring-amber-200' : 'border-slate-300'}`}
-          />
-        </div>
-
-        {/* Submit Button */}
-        <div className="flex space-x-3">
-          {clarificationQuestion && (
-             <button
-             type="button"
-             onClick={onCancelClarification}
-             className="px-6 py-4 rounded-lg font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
-           >
-             Cancel
-           </button>
-          )}
-          <button
-            type="submit"
-            disabled={isProcessing}
-            className={`flex-1 py-4 rounded-lg font-bold text-white shadow-md flex items-center justify-center space-x-2 transition-all transform active:scale-[0.98] ${
-              isProcessing 
-                ? 'bg-slate-400 cursor-not-allowed' 
-                : clarificationQuestion 
-                  ? 'bg-amber-600 hover:bg-amber-700'
-                  : 'bg-blue-600 hover:bg-blue-700 hover:shadow-lg'
-            }`}
-          >
-            {isProcessing ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                <span>{clarificationQuestion ? 'Updating...' : 'Analyzing Report...'}</span>
-              </>
-            ) : (
-              <>
-                <Send className="w-5 h-5" />
-                <span>{clarificationQuestion ? 'Send Reply' : 'Submit Report'}</span>
-              </>
-            )}
-          </button>
-        </div>
-      </form>
+        )}
+      </div>
     </div>
   );
 };

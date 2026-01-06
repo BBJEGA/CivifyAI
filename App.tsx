@@ -5,573 +5,234 @@ import Dashboard from './components/Dashboard';
 import LandingPage from './components/LandingPage';
 import ReportCard from './components/ReportCard';
 import AuthPage from './components/AuthPage';
-import { CivicReport, AnalysisInput, ViewMode, Urgency, UserProfile } from './types';
-import { analyzeReport } from './services/geminiService';
-import { MapPin, User, Loader2, PlayCircle, Plus } from 'lucide-react';
-
-// --- MOCK DATA SEEDER ---
-const SEED_REPORTS: CivicReport[] = [
-  // NIGERIA (Kebbi State)
-  {
-    id: 'seed-ng-1',
-    userId: 'user-jega-1',
-    issue_type: 'Roads',
-    description: 'Deep potholes on the main market road causing accidents.',
-    original_text: 'Deep potholes on the main market road',
-    original_language: 'English',
-    location: 'Central Market Road',
-    lga: 'Jega', // Town/LGA
-    state: 'Kebbi', // City/State
-    country: 'Nigeria',
-    region: 'Jega, Kebbi, Nigeria',
-    coordinates: { lat: 12.2167, lng: 4.3833 },
-    urgency: Urgency.High,
-    predicted_escalation: Urgency.High,
-    // Dual Actions
-    gov_action: 'DEPLOY ROAD MAINTENANCE UNIT TO JEGA MARKET AXIS IMMEDIATELY',
-    citizen_action: 'Drive slowly and avoid the center lane near the market entrance.',
-    
-    timestamp: Date.now() - 10000000,
-    status: 'In Progress',
-    source_type: 'text',
-    upvotes: 12
-  },
-  {
-    id: 'seed-ng-2',
-    userId: 'user-aliero-1',
-    issue_type: 'Water & Sanitation',
-    description: 'No water supply in the university quarters for 3 days.',
-    original_text: 'Babu ruwa a jami\'a',
-    original_language: 'Hausa',
-    location: 'University Quarters',
-    lga: 'Aliero', // Town
-    state: 'Kebbi', // State
-    country: 'Nigeria',
-    region: 'Aliero, Kebbi, Nigeria',
-    coordinates: { lat: 12.3000, lng: 4.4833 },
-    urgency: Urgency.Medium,
-    predicted_escalation: Urgency.Medium,
-    // Dual Actions
-    gov_action: 'DISPATCH WATER TANKERS AND INSPECT PUMPING STATION',
-    citizen_action: 'Store available water and boil before drinking until supply is restored.',
-
-    timestamp: Date.now() - 5000000,
-    status: 'New',
-    source_type: 'voice',
-    upvotes: 3
-  },
-  // NIGERIA (Sokoto State)
-  {
-    id: 'seed-ng-3',
-    userId: 'user-sokoto-1',
-    issue_type: 'Electricity',
-    description: 'Transformer blown up near Sultan Palace area.',
-    original_text: 'Wutar lantarki ta lalace',
-    original_language: 'Hausa',
-    location: 'Sultan Palace Area',
-    lga: 'Bodinga', // Town
-    state: 'Sokoto', // State
-    country: 'Nigeria',
-    region: 'Bodinga, Sokoto, Nigeria',
-    coordinates: { lat: 13.0667, lng: 5.2333 },
-    urgency: Urgency.High,
-    predicted_escalation: Urgency.High,
-    // Dual Actions
-    gov_action: 'CONTACT PHCN FOR IMMEDIATE TRANSFORMER REPLACEMENT',
-    citizen_action: 'Stay clear of the transformer area and disconnect sensitive appliances.',
-
-    timestamp: Date.now() - 2000000,
-    status: 'Resolved',
-    source_type: 'text',
-    upvotes: 5
-  },
-  // MOROCCO (Rabat)
-  {
-    id: 'seed-ma-1',
-    userId: 'user-rabat-1',
-    issue_type: 'Waste Management',
-    description: 'Overflowing dumpsters near the Tramway station in Agdal.',
-    original_text: 'Poubelles qui débordent près de la station Tramway',
-    original_language: 'French',
-    location: 'Avenue de France',
-    lga: 'Agdal', // District/Town
-    state: 'Rabat', // City/Region
-    country: 'Morocco',
-    region: 'Agdal, Rabat, Morocco',
-    coordinates: { lat: 34.000, lng: -6.850 },
-    urgency: Urgency.Medium,
-    predicted_escalation: Urgency.High,
-    // Dual Actions
-    gov_action: 'DISPATCH SANITATION CREW TO AGDAL SECTOR',
-    citizen_action: 'Avoid walking close to the overflow to prevent health risks.',
-
-    timestamp: Date.now() - 9000000,
-    status: 'New',
-    source_type: 'text',
-    upvotes: 8
-  },
-  // USA (New York)
-  {
-    id: 'seed-us-1',
-    userId: 'user-ny-1',
-    issue_type: 'Safety',
-    description: 'Traffic light malfunction at busy intersection.',
-    original_text: 'Traffic light stuck on red',
-    original_language: 'English',
-    location: '5th Ave & 42nd St',
-    lga: 'Manhattan', // Borough/Town
-    state: 'New York', // State/City
-    country: 'USA',
-    region: 'Manhattan, New York, USA',
-    coordinates: { lat: 40.7580, lng: -73.9855 },
-    urgency: Urgency.High,
-    predicted_escalation: Urgency.High,
-    // Dual Actions
-    gov_action: 'ALERT DOT FOR SIGNAL REPAIR AND DEPLOY TRAFFIC CONTROL',
-    citizen_action: 'Treat intersection as a 4-way stop and proceed with extreme caution.',
-
-    timestamp: Date.now() - 12000000,
-    status: 'New',
-    source_type: 'image',
-    upvotes: 2
-  }
-];
+import { CivicReport, AIAnalysisResponse, ViewMode, UserProfile } from './types';
+import { MapPin, User, Loader2, ArrowLeft, PlusCircle } from 'lucide-react';
+import { db, collection, addDoc, onSnapshot, query, orderBy, updateDoc, doc } from './services/firebase';
 
 const App: React.FC = () => {
-  // Navigation State
   const [showLanding, setShowLanding] = useState(true);
   const [showAuth, setShowAuth] = useState(false);
-  const [currentView, setCurrentView] = useState<ViewMode>('submit');
-  const [isDemoMode, setIsDemoMode] = useState(false);
-  const [showDemoForm, setShowDemoForm] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [reports, setReports] = useState<CivicReport[]>([]);
+  const [loadingReports, setLoadingReports] = useState(true);
   
-  // User Authentication State
   const [user, setUser] = useState<UserProfile | null>(() => {
-    const savedUser = localStorage.getItem('civic_user');
-    return savedUser ? JSON.parse(savedUser) : null;
+    const saved = localStorage.getItem('civiclink_user');
+    return saved ? JSON.parse(saved) : null;
   });
 
-  // User Location State (Browser)
-  const [userCoordinates, setUserCoordinates] = useState<{lat: number, lng: number} | null>(null);
-
-  const [reports, setReports] = useState<CivicReport[]>(() => {
-    try {
-      const saved = localStorage.getItem('civic_reports');
-      if (saved) {
-        return JSON.parse(saved);
-      }
-      return SEED_REPORTS;
-    } catch (error) {
-      console.error("Failed to load reports from storage:", error);
-      return SEED_REPORTS;
+  // Role-based initial view
+  const [currentView, setCurrentView] = useState<ViewMode>(() => {
+    const saved = localStorage.getItem('civiclink_user');
+    if (saved) {
+      const u = JSON.parse(saved) as UserProfile;
+      return u.role === 'organization' ? 'dashboard' : 'submit';
     }
+    return 'submit';
   });
 
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [inputHistory, setInputHistory] = useState<AnalysisInput[]>([]);
-  const [clarificationQuestion, setClarificationQuestion] = useState<string | null>(null);
-
-  // Persistence - ONLY if NOT in demo mode
   useEffect(() => {
-    if (!isDemoMode) {
-      localStorage.setItem('civic_reports', JSON.stringify(reports));
-    }
-  }, [reports, isDemoMode]);
+    const q = query(collection(db, "reports"), orderBy("timestamp", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const reportsData = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      })) as CivicReport[];
+      setReports(reportsData);
+      setLoadingReports(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (user) {
-      localStorage.setItem('civic_user', JSON.stringify(user));
-      // Set default view based on role if just logged in
-      if (user.role === 'organization' && currentView !== 'dashboard') setCurrentView('dashboard');
-      if (user.role === 'citizen' && currentView === 'dashboard') setCurrentView('submit');
+      localStorage.setItem('civiclink_user', JSON.stringify(user));
+      setShowLanding(false);
+      // Organization shouldn't see the submission form
+      if (user.role === 'organization' && currentView === 'submit') {
+        setCurrentView('dashboard');
+      }
     } else {
-      localStorage.removeItem('civic_user');
+      localStorage.removeItem('civiclink_user');
     }
   }, [user]);
 
-  // Track User Location for "Near Me" - Run once on mount to check if permission already exists
-  useEffect(() => {
-    if ("geolocation" in navigator && !userCoordinates) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setUserCoordinates({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          });
-        },
-        (error) => console.log("Location not available for Near Me features yet")
-      );
-    }
-  }, []);
-
-  const handleLogin = (loggedInUser: UserProfile, coords?: {lat: number, lng: number}) => {
-    setUser(loggedInUser);
-    
-    // If we got coordinates from the auth page (auto-detect), use them immediately
-    if (coords) {
-      setUserCoordinates(coords);
-    }
-
-    setShowAuth(false);
-    setShowLanding(false); // Ensure landing is hidden
-    setIsDemoMode(false);
-    
-    if (loggedInUser.role === 'organization') {
-      setCurrentView('dashboard');
-    } else {
-      setCurrentView('submit');
+  const handleUpdateStatus = async (reportId: string, newStatus: CivicReport['status']) => {
+    try {
+      const reportRef = doc(db, "reports", reportId);
+      await updateDoc(reportRef, { status: newStatus });
+    } catch (err) {
+      console.error("Error updating status:", err);
+      alert("Permission denied. Only authorized officials can change status.");
     }
   };
 
-  const handleEnterDemo = () => {
-    setIsDemoMode(true);
-    setShowLanding(false);
-    setShowAuth(false);
-    setUser(null);
-    setReports([...SEED_REPORTS]); // Reset to seed data for clean demo session
+  const handleFinalSubmit = async (data: { description: string; analysis: AIAnalysisResponse; location: any }) => {
+    if (user?.role === 'organization') return;
+    setIsSubmitting(true);
+    try {
+      const reportPayload = {
+        userId: user?.uid || 'anonymous',
+        user_description: data.description,
+        ai_metadata: {
+          category: data.analysis.suggested_category,
+          urgency: data.analysis.suggested_urgency,
+          is_high_risk: data.analysis.is_high_risk,
+          safety_advice: data.analysis.safety_advice,
+          suggested_description: data.analysis.suggested_description
+        },
+        location: {
+          address: data.location.address,
+          lga: data.location.lga || user?.location.lga || 'Unknown',
+          state: data.location.state || user?.location.state || 'Lagos',
+          coordinates: { lat: data.location.lat, lng: data.location.lng }
+        },
+        timestamp: Date.now(),
+        status: 'New',
+        upvotes: 1,
+        source_type: 'mixed'
+      };
+
+      await addDoc(collection(db, "reports"), reportPayload);
+      setIsSubmitting(false);
+      setCurrentView('dashboard');
+    } catch (err) {
+      console.error("Submission failed", err);
+      setIsSubmitting(false);
+    }
   };
 
   const handleLogout = () => {
     setUser(null);
-    setIsDemoMode(false);
     setShowLanding(true);
-    setShowAuth(false);
     setCurrentView('submit');
   };
 
-  const handleReportSubmit = async (input: AnalysisInput) => {
-    // In demo mode, we allow submit without user
-    if (!user && !isDemoMode) return; 
-
-    setIsProcessing(true);
-    setError(null);
-
-    const currentHistory = clarificationQuestion 
-      ? [...inputHistory, input]
-      : [input];
-
-    try {
-      if (userCoordinates && !input.userCoordinates) {
-        input.userCoordinates = userCoordinates;
-      }
-
-      const analysis = await analyzeReport(currentHistory);
-
-      if (analysis.needs_clarification) {
-        setInputHistory(currentHistory);
-        setClarificationQuestion(analysis.missing_info_question || "Please provide more details.");
-        setIsProcessing(false);
-        return;
-      }
-
-      const newReport: CivicReport = {
-        id: crypto.randomUUID(),
-        userId: user ? user.id : 'demo-user',
-        issue_type: analysis.issue_type || "Unclassified",
-        description: analysis.description || "No description provided",
-        original_text: analysis.original_text || currentHistory[0].text || "Media input",
-        original_language: analysis.original_language || "Unknown",
-        location: analysis.location || input.userLocation || "Unknown Location",
-        lga: analysis.lga,
-        state: analysis.state,
-        country: analysis.country || "Nigeria", 
-        region: analysis.region || `${analysis.lga || 'Unknown'}, ${analysis.state || 'Unknown'}`,
-        coordinates: userCoordinates || undefined, 
-        urgency: (analysis.urgency as any) || "Low",
-        predicted_escalation: (analysis.predicted_escalation as any) || "Low",
-        
-        // Map new dual actions
-        gov_action: analysis.gov_action || (analysis as any).suggested_action || "Review required",
-        citizen_action: analysis.citizen_action || "Exercise caution.",
-        
-        timestamp: Date.now(),
-        status: 'New',
-        source_type: input.audio ? 'voice' : input.image ? 'image' : input.text ? 'text' : 'mixed',
-        upvotes: 0
-      };
-
-      setReports(prev => [...prev, newReport]);
-      setInputHistory([]);
-      setClarificationQuestion(null);
-      
-      // If demo mode, just close the form
-      if (isDemoMode) {
-         setShowDemoForm(false);
-         alert("Report Submitted Successfully to Demo Dashboard!");
-      } else {
-         setCurrentView('my-reports');
-      }
-
-    } catch (err) {
-      console.error("Submission failed", err);
-      setError("Failed to analyze report. Please try again or check your API key configuration.");
-    } finally {
-      setIsProcessing(false);
-    }
+  const handleLogin = (userData: UserProfile) => {
+    setUser(userData);
+    setShowAuth(false);
+    setShowLanding(false);
+    setCurrentView(userData.role === 'organization' ? 'dashboard' : 'submit');
   };
 
-  const cancelClarification = () => {
-    setInputHistory([]);
-    setClarificationQuestion(null);
-    setError(null);
-  };
-
-  const handleUpvote = (id: string) => {
-    setReports(prev => prev.map(r => {
-      if (r.id === id) {
-        return { ...r, upvotes: r.upvotes + 1 };
-      }
-      return r;
-    }));
-  };
-
-  // --- HELPER: Haversine Distance ---
-  const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371; 
-    const dLat = deg2rad(lat2 - lat1);
-    const dLon = deg2rad(lon2 - lon1); 
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2)
-      ; 
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
-    return R * c;
-  };
-
-  const deg2rad = (deg: number) => deg * (Math.PI/180);
-
-  // --- FILTERED LISTS ---
-  const myReports = reports.filter(r => user && r.userId === user.id);
-  
-  const nearbyReports = reports.filter(r => {
-    if (!userCoordinates || !r.coordinates) return false;
-    if (user && r.userId === user.id) return false; // Exclude own
-    const dist = getDistanceFromLatLonInKm(
-      userCoordinates.lat, userCoordinates.lng,
-      r.coordinates.lat, r.coordinates.lng
-    );
-    return dist < 50; 
-  }).map(r => ({
-    ...r,
-    distance: userCoordinates && r.coordinates 
-      ? getDistanceFromLatLonInKm(userCoordinates.lat, userCoordinates.lng, r.coordinates.lat, r.coordinates.lng)
-      : 0
-  })).sort((a,b) => a.distance - b.distance);
-
-
-  // --- VIEW RENDERING LOGIC ---
-
-  if (showLanding && !user && !isDemoMode) {
-    return (
-      <LandingPage 
-        onLaunch={() => {
-          setShowLanding(false);
-          setShowAuth(true);
-        }} 
-        onDemo={handleEnterDemo}
-      />
-    );
+  if (showLanding && !user) {
+    return <LandingPage onLaunch={() => { setShowLanding(false); setShowAuth(true); }} onDemo={() => { setShowLanding(false); setShowAuth(true); }} />;
   }
 
-  if (showAuth && !user && !isDemoMode) {
-    return (
-      <AuthPage 
-        onLogin={handleLogin} 
-        onCancel={() => { 
-          setShowAuth(false); 
-          setShowLanding(true); 
-        }}
-        onDemo={handleEnterDemo}
-      />
-    );
+  if (showAuth && !user) {
+    return <AuthPage onLogin={handleLogin} onCancel={() => { setShowAuth(false); setShowLanding(true); }} />;
   }
 
-  // DEMO MODE UNIFIED DASHBOARD
-  if (isDemoMode) {
-    return (
-      <div className="min-h-screen bg-slate-50 pb-12">
-         <Header 
-          onHomeClick={handleLogout} 
-          currentView={'dashboard'} 
-          onViewChange={() => {}} 
-          user={null}
-          onLogout={handleLogout}
-          isDemoMode={true}
-        />
-        <main className="container mx-auto px-4 py-8">
-           
-           {/* Demo Controls */}
-           <div className="mb-6 flex justify-between items-center">
-             <div>
-               <h2 className="text-2xl font-bold text-slate-900">Demo Operations Center</h2>
-               <p className="text-slate-500">Unified view of both individual reporting and government response tools.</p>
-             </div>
-             <button 
-               onClick={() => setShowDemoForm(!showDemoForm)}
-               className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-full font-bold shadow-lg flex items-center space-x-2 transition-all"
-             >
-               {showDemoForm ? <Plus className="w-5 h-5 rotate-45" /> : <Plus className="w-5 h-5" />}
-               <span>{showDemoForm ? 'Close Form' : 'Submit Test Report'}</span>
-             </button>
-           </div>
-
-           {/* Collapsible Report Form for Demo */}
-           {showDemoForm && (
-             <div className="mb-8 animate-in fade-in slide-in-from-top-4">
-               <div className="max-w-2xl mx-auto bg-white p-1 rounded-xl shadow-xl ring-1 ring-slate-200">
-                  <ReportForm 
-                    onSubmit={handleReportSubmit} 
-                    isProcessing={isProcessing}
-                    clarificationQuestion={clarificationQuestion}
-                    onCancelClarification={cancelClarification}
-                  />
-               </div>
-             </div>
-           )}
-
-           <Dashboard 
-             reports={reports} 
-             isDemoMode={true}
-           />
-        </main>
-      </div>
-    )
-  }
+  const defaultView = user?.role === 'organization' ? 'dashboard' : 'submit';
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-12">
+    <div className="min-h-screen bg-slate-50 font-sans selection:bg-blue-100 pb-24 md:pb-12">
       <Header 
-        onHomeClick={() => {
-           // If user is logged in, Home goes to their default view. If not, Landing.
-           if (user) {
-             setCurrentView(user.role === 'organization' ? 'dashboard' : 'submit');
-           } else {
-             setShowLanding(true);
-             setShowAuth(false);
-           }
-        }} 
+        onHomeClick={() => user ? setCurrentView(defaultView) : setShowLanding(true)}
         currentView={currentView}
         onViewChange={setCurrentView}
         user={user}
         onLogout={handleLogout}
       />
       
-      <main className="container mx-auto px-4 py-8">
-        
-        {/* VIEW: NEW REPORT (Citizens Only) */}
-        {currentView === 'submit' && user?.role === 'citizen' && (
-          <div className="max-w-2xl mx-auto">
-            <div className="mb-8 text-center">
-              <h2 className="text-3xl font-bold text-slate-900 mb-2">Make Your Voice Heard</h2>
-              <p className="text-slate-600">Submit a report instantly. We'll handle the rest.</p>
-            </div>
-            <ReportForm 
-              onSubmit={handleReportSubmit} 
-              isProcessing={isProcessing}
-              clarificationQuestion={clarificationQuestion}
-              onCancelClarification={cancelClarification}
-            />
-             {error && (
-                <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg border border-red-200 text-sm">
-                  {error}
-                </div>
-              )}
-          </div>
-        )}
-
-        {/* VIEW: DASHBOARD (Organizations Only) */}
-        {currentView === 'dashboard' && user?.role === 'organization' && (
-          <Dashboard 
-            reports={reports} 
-            lockedLocation={user.location} 
-            organizationName={user.organizationName}
-          />
-        )}
-
-        {/* VIEW: MY REPORTS (Citizens Only) */}
-        {currentView === 'my-reports' && user?.role === 'citizen' && (
-          <div className="max-w-3xl mx-auto">
-            <div className="flex items-center space-x-3 mb-6">
-              <div className="bg-blue-100 p-2 rounded-full">
-                <User className="w-6 h-6 text-blue-600" />
-              </div>
-              <div>
-                <h2 className="text-2xl font-bold text-slate-900">My Submission History</h2>
-                <p className="text-slate-500 text-sm">Track the status of your reported issues</p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              {myReports.length === 0 ? (
-                 <div className="text-center py-16 bg-white rounded-xl border border-dashed border-slate-300">
-                    <p className="text-slate-500 mb-4">You haven't submitted any reports yet.</p>
-                    <button 
-                      onClick={() => setCurrentView('submit')}
-                      className="text-blue-600 font-bold hover:underline"
-                    >
-                      Submit your first report
-                    </button>
-                 </div>
-              ) : (
-                myReports.slice().reverse().map(report => (
-                  <ReportCard 
-                    key={report.id} 
-                    report={report} 
-                    isMyReportView 
-                    viewerRole={user.role} // Pass role to determine action text
-                  />
-                ))
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* VIEW: NEAR ME (Citizens Only) */}
-        {currentView === 'nearby' && user?.role === 'citizen' && (
-          <div className="max-w-3xl mx-auto">
-            <div className="flex items-center space-x-3 mb-6">
-              <div className="bg-emerald-100 p-2 rounded-full">
-                <MapPin className="w-6 h-6 text-emerald-600" />
-              </div>
-              <div>
-                <h2 className="text-2xl font-bold text-slate-900">Community Reports Near You</h2>
-                <p className="text-slate-500 text-sm">Verify existing issues to help prioritize them without duplication.</p>
-              </div>
-            </div>
-
-            {!userCoordinates ? (
-              <div className="bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-lg flex items-center">
-                <Loader2 className="w-5 h-5 animate-spin mr-3" />
-                <span>Detecting your location to find nearby reports...</span>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {nearbyReports.length === 0 ? (
-                   <div className="text-center py-16 bg-white rounded-xl border border-dashed border-slate-300">
-                      <p className="text-slate-500">No reports found within 50km of your location.</p>
-                   </div>
-                ) : (
-                  nearbyReports.map(report => (
-                    <ReportCard 
-                      key={report.id} 
-                      report={report} 
-                      isNearbyView 
-                      distance={(report as any).distance}
-                      onUpvote={handleUpvote}
-                      viewerRole={user.role}
-                    />
-                  ))
-                )}
-              </div>
+      <main className="container mx-auto px-4 md:px-6 py-6 md:py-8 max-w-7xl">
+        <div className="mb-6 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {currentView !== defaultView && (
+              <button 
+                onClick={() => setCurrentView(defaultView)}
+                className="flex items-center gap-2 px-4 py-2 bg-white rounded-2xl border border-slate-200 shadow-sm text-slate-800 font-black hover:text-blue-600 hover:border-blue-200 transition-all active:scale-95"
+              >
+                <ArrowLeft className="w-5 h-5" />
+                <span>Back</span>
+              </button>
             )}
+            <div className="hidden md:flex flex-col">
+              <h2 className="text-xl font-black text-slate-900 leading-none">
+                {currentView === 'submit' ? 'Submit Report' : currentView === 'dashboard' ? 'Live Dashboard' : 'Regional Feed'}
+              </h2>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                {user?.role === 'organization' ? `${user?.organizationName} • Management` : `Active in ${user?.location.state}`}
+              </span>
+            </div>
+          </div>
+
+          {user?.role === 'citizen' && currentView !== 'submit' && (
+             <button 
+               onClick={() => setCurrentView('submit')}
+               className="bg-blue-600 text-white px-5 py-2.5 rounded-2xl font-black text-sm shadow-lg shadow-blue-600/30 flex items-center gap-2 hover:bg-blue-700 active:scale-95 transition-all"
+             >
+               <PlusCircle className="w-5 h-5" />
+               <span>New Report</span>
+             </button>
+          )}
+        </div>
+
+        {currentView === 'submit' && user?.role === 'citizen' && (
+          <div className="max-w-2xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4">
+            <div className="text-center space-y-3">
+              <div className="inline-flex items-center gap-2 bg-blue-50 px-4 py-1.5 rounded-full border border-blue-100">
+                <span className="w-2 h-2 bg-blue-600 rounded-full animate-ping"></span>
+                <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest">Connected to {user?.location.state}</span>
+              </div>
+              <h2 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tight leading-tight">Empower Change.</h2>
+              <p className="text-slate-500 font-bold text-base md:text-lg">Your report is submitted directly to the {user?.location.state} Ministry.</p>
+            </div>
+            <ReportForm onSubmit={handleFinalSubmit} isSubmitting={isSubmitting} />
           </div>
         )}
 
+        {currentView === 'dashboard' && (
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
+            <Dashboard reports={reports} user={user} onUpdateStatus={handleUpdateStatus} />
+          </div>
+        )}
+
+        {currentView === 'nearby' && (
+          <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4">
+            <h2 className="text-3xl font-black text-slate-900 tracking-tight">State Activity</h2>
+            <div className="grid gap-6">
+              {reports.filter(r => r.location.state === user?.location.state).length === 0 ? (
+                <EmptyState onAction={() => setCurrentView('submit')} showButton={user?.role === 'citizen'} />
+              ) : (
+                reports
+                  .filter(r => r.location.state === user?.location.state)
+                  .map(r => <ReportCard key={r.id} report={r} user={user} onUpdateStatus={handleUpdateStatus} />)
+              )}
+            </div>
+          </div>
+        )}
+
+        {currentView === 'my-reports' && (
+          <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4">
+            <h2 className="text-3xl font-black text-slate-900 tracking-tight">My Timeline</h2>
+            <div className="grid gap-6">
+              {reports.filter(r => r.userId === user?.uid).length === 0 ? (
+                <EmptyState onAction={() => setCurrentView('submit')} showButton={user?.role === 'citizen'} />
+              ) : (
+                reports.filter(r => r.userId === user?.uid).map(r => <ReportCard key={r.id} report={r} user={user} onUpdateStatus={handleUpdateStatus} />)
+              )}
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
 };
+
+const EmptyState = ({ onAction, showButton = true }: any) => (
+  <div className="text-center py-20 bg-white rounded-[2rem] border-4 border-dashed border-slate-100 flex flex-col items-center">
+    <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-6">
+      <MapPin className="w-10 h-10 text-slate-200" />
+    </div>
+    <p className="text-slate-400 font-bold text-lg mb-6">No reports found in this area yet.</p>
+    {showButton && (
+      <button onClick={onAction} className="px-8 py-3 bg-blue-600 text-white rounded-2xl font-black shadow-lg shadow-blue-600/20 hover:bg-blue-700 transition-all">
+        Create First Report
+      </button>
+    )}
+  </div>
+);
 
 export default App;
