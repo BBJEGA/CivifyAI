@@ -1,10 +1,11 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { AIAnalysisResponse, Urgency, AnalysisInput } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Safe access to environment variables in a Vite context
+const getApiKey = () => {
+  return (typeof process !== 'undefined' && process.env?.API_KEY) || "";
+};
 
-// Fix: Removed 'Schema' from imports and relying on Type from @google/genai as per guidelines.
 const ANALYSIS_SCHEMA = {
   type: Type.OBJECT,
   properties: {
@@ -28,6 +29,13 @@ const ANALYSIS_SCHEMA = {
 };
 
 export const analyzeCivicInput = async (input: AnalysisInput): Promise<AIAnalysisResponse> => {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    console.error("Gemini API key is not configured.");
+    // Fallback or handle gracefully
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
   const parts: any[] = [];
   
   let promptText = `
@@ -63,7 +71,6 @@ export const analyzeCivicInput = async (input: AnalysisInput): Promise<AIAnalysi
     parts.push({ inlineData: { mimeType: "audio/mp3", data } });
   }
 
-  // Fix: Use gemini-3-flash-preview as recommended for basic tasks and better capabilities
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: { parts },
@@ -73,7 +80,6 @@ export const analyzeCivicInput = async (input: AnalysisInput): Promise<AIAnalysi
     }
   });
 
-  // Fix: Directly accessing .text property as it is a property, not a method.
   return JSON.parse(response.text || '{}') as AIAnalysisResponse;
 };
 
