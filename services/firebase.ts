@@ -15,7 +15,7 @@ import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-  // Using an environment variable to prevent security leaks
+  // We use environment variables so your secrets are never exposed on GitHub
   apiKey: process.env.FIREBASE_API_KEY || process.env.API_KEY, 
   authDomain: "community-report-6c64b.firebaseapp.com",
   projectId: "community-report-6c64b",
