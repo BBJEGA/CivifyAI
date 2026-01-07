@@ -1,4 +1,3 @@
-
 import { initializeApp } from "firebase/app";
 import { 
   getFirestore, 
@@ -16,7 +15,8 @@ import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCuw36hwmyMqREUhlPnbQlwWqYws9X0XkY",
+  // Using an environment variable to prevent security leaks
+  apiKey: process.env.FIREBASE_API_KEY || process.env.API_KEY, 
   authDomain: "community-report-6c64b.firebaseapp.com",
   projectId: "community-report-6c64b",
   storageBucket: "community-report-6c64b.firebasestorage.app",
