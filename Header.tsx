@@ -1,7 +1,6 @@
-
 import React from 'react';
 import { ShieldCheck, MapPin, User, LayoutDashboard, PlusCircle, LogOut, ChevronDown, Bell } from 'lucide-react';
-import { ViewMode, UserProfile } from '../types';
+import { ViewMode, UserProfile } from './types';
 
 interface HeaderProps {
   onHomeClick: () => void;
@@ -100,7 +99,7 @@ const Header: React.FC<HeaderProps> = ({ onHomeClick, currentView, onViewChange,
         </div>
       </header>
 
-      {/* Mobile Bottom Navigation Bar - FIXED VISIBILITY ON MOBILE */}
+      {/* Mobile Bottom Navigation Bar */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex justify-around items-center py-2 px-4 z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
         <MobileNavItem active={currentView === 'submit'} onClick={() => onViewChange('submit')} icon={PlusCircle} label="Report" />
         <MobileNavItem active={currentView === 'dashboard'} onClick={() => onViewChange('dashboard')} icon={LayoutDashboard} label="Live" />
